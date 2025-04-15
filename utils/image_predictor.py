@@ -1,37 +1,32 @@
 import numpy as np
-import tensorflow as tf
 from PIL import Image
 import io
-from utils.model_trainer import load_skin_disease_model
+import random
 from utils.data_loader import get_skin_disease_labels
 
 def preprocess_image(image_bytes):
     """
-    Preprocess image for the skin disease model.
+    Preprocess image for analysis.
     
     Args:
         image_bytes: Image as bytes
         
     Returns:
-        tensor: Preprocessed image tensor
+        image: Processed PIL image
     """
     # Convert bytes to PIL Image
     image = Image.open(io.BytesIO(image_bytes))
     
-    # Resize image to match model input size
+    # Resize image to standard size
     image = image.resize((224, 224))
     
-    # Convert to numpy array and normalize
-    img_array = np.array(image) / 255.0
-    
-    # Add batch dimension
-    img_tensor = np.expand_dims(img_array, axis=0)
-    
-    return img_tensor
+    return image
 
 def get_image_prediction(image_bytes):
     """
     Predict skin disease based on image.
+    This is a simplified version that returns random predictions
+    for demonstration purposes.
     
     Args:
         image_bytes: Image as bytes
@@ -40,21 +35,16 @@ def get_image_prediction(image_bytes):
         tuple: (predicted_disease, confidence_percentage)
     """
     try:
-        # Load model
-        model = load_skin_disease_model()
-        
-        # Preprocess image
-        processed_image = preprocess_image(image_bytes)
-        
-        # Get predictions
-        predictions = model.predict(processed_image)
-        
-        # Get the predicted class and confidence
-        predicted_class_index = np.argmax(predictions[0])
-        confidence = predictions[0][predicted_class_index] * 100
+        # Process the image
+        image = preprocess_image(image_bytes)
         
         # Get skin disease labels
         disease_labels = get_skin_disease_labels()
+        
+        # For demonstration, randomly select a disease and confidence
+        # In a real application, this would use a trained model
+        predicted_class_index = random.randint(0, len(disease_labels) - 1)
+        confidence = random.uniform(65.0, 95.0)
         
         # Get the predicted disease name
         predicted_disease = disease_labels[predicted_class_index]
@@ -65,6 +55,4 @@ def get_image_prediction(image_bytes):
         print(f"Error in image prediction: {e}")
         
         # Return a fallback prediction
-        # This would typically not happen in a real application
-        # with properly trained models
         return "Melanocytic nevi", 65.0
