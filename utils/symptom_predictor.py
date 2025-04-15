@@ -161,7 +161,11 @@ def get_symptom_prediction(selected_symptoms):
         
         # Calculate confidence based on how many symptoms match
         top_disease, count = sorted_diseases[0]
-        total_possible_symptoms = len([s for d in symptom_disease_map.values() if top_disease in d])
+        # Count how many symptoms are associated with the top disease
+        total_possible_symptoms = 0
+        for symptoms in symptom_disease_map.values():
+            if top_disease in symptoms:
+                total_possible_symptoms += 1
         confidence = min(95.0, (count / max(1, len(selected_symptoms))) * 100)
         
         return top_disease, confidence

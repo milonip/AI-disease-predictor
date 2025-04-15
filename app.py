@@ -44,11 +44,13 @@ col1, col2 = st.columns([1, 1])
 with col1:
     symptom_tab = st.button("Symptom Based", 
                          type="primary" if st.session_state.active_tab == "symptom" else "secondary",
-                         use_container_width=True)
+                         use_container_width=True,
+                         key="symptom_tab_button")
 with col2:
     image_tab = st.button("Image Based", 
                        type="primary" if st.session_state.active_tab == "image" else "secondary",
-                       use_container_width=True)
+                       use_container_width=True,
+                       key="image_tab_button")
 
 if symptom_tab:
     st.session_state.active_tab = "symptom"
@@ -77,20 +79,20 @@ with main_container:
         # List to track selected symptoms
         selected_symptoms = []
         
-        # Distribute symptoms across columns
+        # Distribute symptoms across columns with unique keys
         for i, symptom in enumerate(symptoms_list):
             if i % 3 == 0:
-                if col1.checkbox(symptom):
+                if col1.checkbox(symptom, key=f"symptom_{i}"):
                     selected_symptoms.append(symptom)
             elif i % 3 == 1:
-                if col2.checkbox(symptom):
+                if col2.checkbox(symptom, key=f"symptom_{i}"):
                     selected_symptoms.append(symptom)
             else:
-                if col3.checkbox(symptom):
+                if col3.checkbox(symptom, key=f"symptom_{i}"):
                     selected_symptoms.append(symptom)
         
         # Predict button
-        predict_button = st.button("Predict", type="primary", use_container_width=True)
+        predict_button = st.button("Predict", type="primary", use_container_width=True, key="symptom_predict_button")
         
         if predict_button:
             if len(selected_symptoms) == 0:
@@ -128,10 +130,10 @@ with main_container:
         if uploaded_file is not None:
             # Display uploaded image
             image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Image", use_column_width=True)
+            st.image(image, caption="Uploaded Image", use_container_width=True)
             
             # Predict button
-            predict_button = st.button("Predict", type="primary", use_container_width=True)
+            predict_button = st.button("Predict", type="primary", use_container_width=True, key="image_predict_button")
             
             if predict_button:
                 with st.spinner("Analyzing image..."):
@@ -158,7 +160,7 @@ with main_container:
                         st.error(f"Error analyzing image: {e}")
         else:
             # Make predict button appear but disabled when no image is uploaded
-            st.button("Predict", type="primary", use_container_width=True, disabled=True)
+            st.button("Predict", type="primary", use_container_width=True, disabled=True, key="disabled_predict_button")
 
 # Footer section
 st.markdown("---")
