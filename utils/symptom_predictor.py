@@ -244,10 +244,39 @@ def get_symptom_prediction(selected_symptoms):
                     else:
                         disease_counts[disease] = 1
         
-        # If no matching diseases found, use a fallback approach
+        # If no matching diseases found, use a deterministic fallback approach
         if not disease_counts:
-            common_diseases = ["Common Cold", "Influenza", "Gastroenteritis", "Allergic reaction"]
-            return random.choice(common_diseases), random.uniform(60.0, 75.0)
+            # Calculate which symptoms have the closest match to common conditions
+            symptom_matches = {}
+            for symptom in selected_symptoms:
+                # Calculate string similarity to known symptom keys
+                best_match = None
+                best_score = 0
+                
+                for known_symptom in symptom_disease_map.keys():
+                    # Simple string similarity - common substring length
+                    common_len = 0
+                    for i in range(min(len(symptom), len(known_symptom))):
+                        if symptom[i].lower() == known_symptom[i].lower():
+                            common_len += 1
+                    
+                    score = common_len / max(len(symptom), len(known_symptom))
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = known_symptom
+                
+                if best_match and best_score > 0.5:  # Minimum similarity threshold
+                    symptom_matches[best_match] = best_score
+            
+            # If we found similar symptoms, use them
+            if symptom_matches:
+                for similar_symptom, _ in sorted(symptom_matches.items(), key=lambda x: x[1], reverse=True):
+                    if similar_symptom in symptom_disease_map:
+                        return symptom_disease_map[similar_symptom][0], 70.0
+            
+            # If still no match, return the most common condition with low confidence
+            return "Common Cold", 65.0
         
         # Sort diseases by frequency
         sorted_diseases = sorted(disease_counts.items(), key=lambda x: x[1], reverse=True)
