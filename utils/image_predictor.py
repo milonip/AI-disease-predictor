@@ -73,48 +73,66 @@ def get_image_prediction(image_bytes):
         g_b_ratio = green_intensity / max(1, blue_intensity)
         
         # More advanced image analysis
-        # Check for symmetry
-        left_half = img_array[:, :img_array.shape[1]//2, :]
-        right_half = img_array[:, img_array.shape[1]//2:, :]
-        right_half_flipped = np.flip(right_half, axis=1)
-        # Adjust for any size differences
-        min_width = min(left_half.shape[1], right_half_flipped.shape[1])
-        symmetry_diff = np.mean(np.abs(left_half[:, :min_width, :] - right_half_flipped[:, :min_width, :]))
-        symmetry_score = 1.0 - min(1.0, symmetry_diff / 50.0)
-        
-        # Check for border regularity using a more robust approach
+        # Improved symmetry calculation with normalization
         try:
-            # Handle gradient calculation more safely
-            h_gradient_array = np.mean(np.abs(img_array[:, 1:] - img_array[:, :-1]), axis=2)
-            v_gradient_array = np.mean(np.abs(img_array[1:, :] - img_array[:-1, :]), axis=2)
+            # Split image into left and right halves
+            left_half = img_array[:, :img_array.shape[1]//2, :]
+            right_half = img_array[:, img_array.shape[1]//2:, :]
             
-            # Create threshold masks
-            h_edge_mask = h_gradient_array > 20
-            v_edge_mask = v_gradient_array > 20
+            # Flip right half for comparison
+            right_half_flipped = np.flip(right_half, axis=1)
             
-            # Count edge pixels
-            h_edge_count = np.sum(h_edge_mask)
-            v_edge_count = np.sum(v_edge_mask)
-            
-            # Calculate irregularity based on edge variance
-            if h_edge_count > 0:
-                edge_y, edge_x = np.nonzero(h_edge_mask)
-                h_std_x = np.std(edge_x) if len(edge_x) > 0 else 0
-                h_std_y = np.std(edge_y) if len(edge_y) > 0 else 0
-                h_irregularity = (h_std_x + h_std_y) / 100.0
-            else:
-                h_irregularity = 0.0
+            # Ensure we can compare halves (handle size differences)
+            min_width = min(left_half.shape[1], right_half_flipped.shape[1])
+            if min_width > 5:  # Only calculate if we have enough pixels
+                # Calculate mean absolute difference across all color channels
+                diff_array = np.abs(left_half[:, :min_width, :] - right_half_flipped[:, :min_width, :])
+                symmetry_diff = np.mean(diff_array)
                 
-            if v_edge_count > 0:
-                edge_y, edge_x = np.nonzero(v_edge_mask)
-                v_std_x = np.std(edge_x) if len(edge_x) > 0 else 0
-                v_std_y = np.std(edge_y) if len(edge_y) > 0 else 0
-                v_irregularity = (v_std_x + v_std_y) / 100.0
-            else:
-                v_irregularity = 0.0
+                # Normalize the difference to a realistic range
+                # Lower divisor increases sensitivity to asymmetry
+                raw_symmetry = 1.0 - min(1.0, symmetry_diff / 25.0)
                 
-            # Combine irregularity measures
-            border_irregularity = min(1.0, max(h_irregularity, v_irregularity))
+                # Most skin lesions have some asymmetry, use a more realistic range
+                symmetry_score = 0.4 + (raw_symmetry * 0.5)
+                
+                print(f"Symmetry calculation: diff={symmetry_diff:.2f}, score={symmetry_score:.2f}")
+            else:
+                # Default for small images
+                symmetry_score = 0.65
+                print("Using default symmetry due to small image size")
+        except Exception as e:
+            # Default value if calculation fails
+            symmetry_score = 0.65
+            print(f"Symmetry calculation error: {e}, using default")
+        
+        # Simplified, more robust border irregularity calculation
+        try:
+            # Grayscale conversion for edge detection
+            gray_img = np.mean(img_array, axis=2)
+            
+            # Simple edge detection
+            h_edges = np.abs(gray_img[:, 1:] - gray_img[:, :-1])
+            v_edges = np.abs(gray_img[1:, :] - gray_img[:-1, :])
+            
+            # Calculate edge statistics
+            h_edge_mean = np.mean(h_edges)
+            v_edge_mean = np.mean(v_edges)
+            h_edge_std = np.std(h_edges)
+            v_edge_std = np.std(v_edges)
+            
+            # Normalized irregularity measure
+            # Higher std/mean ratio indicates more irregular borders
+            h_irregularity = min(1.0, h_edge_std / (h_edge_mean + 1e-5) / 3.0)
+            v_irregularity = min(1.0, v_edge_std / (v_edge_mean + 1e-5) / 3.0)
+            
+            # Combined measure with better normalization
+            combined_irregularity = (h_irregularity + v_irregularity) / 2.0
+            
+            # Adjust to reduce extreme values
+            border_irregularity = min(0.85, max(0.15, combined_irregularity))
+            
+            print(f"Border irregularity calculation: {h_irregularity:.2f}, {v_irregularity:.2f}, final={border_irregularity:.2f}")
         except Exception as e:
             print(f"Edge detection error: {e}")
             border_irregularity = 0.5  # Default to medium irregularity on error
@@ -156,25 +174,41 @@ def get_image_prediction(image_bytes):
         
         # 1: Basal Cell Carcinoma - pearly/waxy bumps, often with visible blood vessels
         scores[1] = (
-            (min(1.0, edge_intensity / 30.0) * 20) +               # Distinct borders
-            ((brightness > 140) * 15) +                             # Brighter appearance
-            ((color_variation > 40) * 15) +                         # Moderate color variation
-            ((contrast > 80) * 10) +                                # Good contrast
-            ((border_irregularity > 0.4) * 15) +                    # Irregular borders
-            ((red_std > 50) * 15) +                                 # Red variance (blood vessels)
-            ((symmetry_score < 0.8) * 10)                           # Moderate asymmetry
-        ) / 100 * 100  # Normalize to percentage
+            (min(1.0, edge_intensity / 30.0) * 15) +               # Distinct borders
+            ((brightness > 140 and brightness < 200) * 15) +        # Brighter but not extremely bright
+            ((color_variation > 40 and color_variation < 70) * 15) + # Moderate color variation
+            ((contrast > 80 and contrast < 150) * 10) +             # Good contrast but not extreme
+            ((border_irregularity > 0.4 and border_irregularity < 0.7) * 15) + # Moderate irregularity
+            ((red_std > 50 and red_std < 80) * 15) +                # Moderate red variance (blood vessels)
+            ((symmetry_score < 0.75 and symmetry_score > 0.4) * 10) # Moderate asymmetry
+        ) / 95 * 100  # Normalize to percentage
         
         # 2: Benign Keratosis - brown, well-circumscribed with waxy surface
+        
+        # Improved detection for benign keratosis-like lesions
+        # These are typically light to dark brown with well-defined borders
+        
+        # Calculate the light to medium brown pixel ratio
+        keratosis_color_ratio = (
+            (img_array[:,:,0] > 100) & (img_array[:,:,0] < 180) &
+            (img_array[:,:,1] > 80) & (img_array[:,:,1] < 150) &
+            (img_array[:,:,2] > 40) & (img_array[:,:,2] < 100)
+        ).sum() / (img_array.shape[0] * img_array.shape[1])
+        
+        # Keratosis often has some texture
+        keratosis_color_match = keratosis_color_ratio > 0.25
+        print(f"Keratosis color match: {keratosis_color_ratio:.2f}, match={keratosis_color_match}")
+        
         scores[2] = (
-            ((color_variation > 30 and color_variation < 60) * 20) + # Moderate color variation
-            ((red_intensity < 150 and green_intensity < 150 and blue_intensity < 150) * 15) + # Darker colors
-            ((brightness < 150) * 10) +                             # Not too bright
-            ((min(1.0, edge_intensity / 15.0) > 0.6) * 15) +        # Clear edges
-            ((symmetry_score > 0.8) * 15) +                         # Good symmetry
-            ((border_irregularity < 0.4) * 15) +                    # Regular borders
-            ((texture_score > 0.3) * 10)                            # Some texture
-        ) / 100 * 100  # Normalize to percentage
+            ((color_variation > 25 and color_variation < 65) * 20) + # Moderate color variation
+            ((red_intensity < 160 and green_intensity < 160 and blue_intensity < 130) * 15) + # Typical color range
+            ((brightness < 160 and brightness > 100) * 15) +        # Medium brightness
+            ((min(1.0, edge_intensity / 15.0) > 0.4) * 10) +        # Clear but not too sharp edges
+            ((symmetry_score > 0.6) * 15) +                         # Fairly good symmetry
+            ((border_irregularity < 0.6) * 15) +                    # Moderately regular borders
+            ((texture_score > 0.2) * 10) +                          # Some texture
+            (keratosis_color_match * 20)                            # Color characteristic of keratosis
+        ) / 120 * 100  # Normalize to percentage
         
         # 3: Dermatofibroma - small, firm, red-brown bump
         scores[3] = (
@@ -200,15 +234,28 @@ def get_image_prediction(image_bytes):
         
         # 5: Melanocytic Nevi - symmetric, uniform colored moles
         normalized_edge = min(1.0, edge_intensity / 15.0)
+        
+        # More robust nevi detection based on clinical characteristcis
+        brown_pixel_ratio = (
+            (img_array[:,:,0] > 80) & (img_array[:,:,0] < 160) &
+            (img_array[:,:,1] > 50) & (img_array[:,:,1] < 130) &
+            (img_array[:,:,2] > 40) & (img_array[:,:,2] < 100)
+        ).sum() / (img_array.shape[0] * img_array.shape[1])
+        
+        # Nevi are typically brown and uniform
+        brown_dominance = brown_pixel_ratio > 0.3
+        
+        # Enhanced criteria for nevi (common moles)
         scores[5] = (
-            ((color_variation < 40) * 20) +                         # Low color variation
-            ((normalized_edge < 0.9 and normalized_edge > 0.2) * 15) +   # Soft but present edges
-            ((brightness > 90) * 10) +                              # Not too dark
-            ((red_std < 40 and green_std < 40 and blue_std < 40) * 15) + # Color uniformity
-            ((symmetry_score > 0.8) * 20) +                         # High symmetry
-            ((color_consistency > 0.8) * 15) +                      # Consistent color
-            ((border_irregularity < 0.4) * 15)                      # Regular borders
-        ) / 110 * 100  # Normalize to percentage
+            ((color_variation < 45) * 15) +                         # Low-moderate color variation
+            ((normalized_edge < 1.0 and normalized_edge > 0.2) * 15) + # Soft but present edges
+            ((brightness > 80 and brightness < 180) * 15) +         # Typical mole brightness range
+            ((red_std < 50 and green_std < 50 and blue_std < 50) * 15) + # Color uniformity
+            ((symmetry_score > 0.6) * 15) +                         # Good symmetry
+            ((color_consistency > 0.7) * 15) +                      # Consistent color
+            ((border_irregularity < 0.5) * 15) +                    # Regular borders
+            (brown_dominance * 20)                                  # Typical brown color
+        ) / 125 * 100  # Normalize to percentage
         
         # 6: Vascular Lesions - red/purple color, can be flat or raised
         scores[6] = (
