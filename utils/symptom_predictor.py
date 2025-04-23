@@ -1,5 +1,12 @@
 import random
+import os
+import joblib
+import numpy as np
 from assets.symptoms_list import symptoms_list
+
+# Path to the trained symptom model
+MODEL_PATH = os.path.join("models", "symptom_disease_model.joblib")
+MODEL = None
 
 # Expert-defined symptom to disease mapping
 symptom_disease_map = {
@@ -128,9 +135,86 @@ symptom_disease_map = {
     "yellow crust ooze": ["Impetigo", "Eczema", "Seborrheic dermatitis"]
 }
 
+def load_model(model_path=None):
+    """
+    Load the trained model for symptom-based disease prediction.
+    
+    Args:
+        model_path: Path to the saved model
+        
+    Returns:
+        model: Loaded joblib model or None if model not found
+    """
+    global MODEL, MODEL_PATH
+    
+    # Use provided path or default
+    if model_path:
+        MODEL_PATH = model_path
+    
+    try:
+        if os.path.exists(MODEL_PATH):
+            print(f"Loading symptom disease model from {MODEL_PATH}")
+            MODEL = joblib.load(MODEL_PATH)
+            print("Model loaded successfully")
+            return MODEL
+        else:
+            print(f"Model not found at {MODEL_PATH}, using rule-based prediction")
+            return None
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return None
+
+def predict_with_ml_model(selected_symptoms):
+    """
+    Make a prediction using the trained machine learning model.
+    
+    Args:
+        selected_symptoms: List of selected symptom strings
+        
+    Returns:
+        tuple: (predicted_disease, confidence_percentage) or None if prediction fails
+    """
+    global MODEL
+    
+    # Try to load model if not already loaded
+    if MODEL is None:
+        MODEL = load_model()
+    
+    # If model couldn't be loaded, return None to use rule-based approach
+    if MODEL is None:
+        return None
+    
+    try:
+        # Create feature vector (one-hot encoding of symptoms)
+        feature_vector = np.zeros(len(symptoms_list))
+        
+        # Set 1 for each symptom that is present
+        for symptom in selected_symptoms:
+            if symptom in symptoms_list:
+                feature_vector[symptoms_list.index(symptom)] = 1
+        
+        # Reshape to match model input format (1 sample, many features)
+        feature_vector = feature_vector.reshape(1, -1)
+        
+        # Get prediction probabilities
+        prediction_probs = MODEL.predict_proba(feature_vector)[0]
+        predicted_class_index = prediction_probs.argmax()
+        confidence = prediction_probs[predicted_class_index] * 100
+        
+        # Get disease name from model classes
+        disease_names = MODEL.classes_
+        predicted_disease = disease_names[predicted_class_index]
+        
+        return predicted_disease, confidence
+    
+    except Exception as e:
+        print(f"Error in ML model prediction: {e}")
+        return None
+
 def get_symptom_prediction(selected_symptoms):
     """
     Predict disease based on selected symptoms.
+    Uses machine learning model if available, otherwise falls back to rule-based approach.
     
     Args:
         selected_symptoms: List of selected symptom strings
@@ -138,7 +222,16 @@ def get_symptom_prediction(selected_symptoms):
     Returns:
         tuple: (predicted_disease, confidence_percentage)
     """
+    if not selected_symptoms:
+        return "Insufficient data", 0.0
+    
     try:
+        # First try to use ML model if available
+        ml_prediction = predict_with_ml_model(selected_symptoms)
+        if ml_prediction:
+            return ml_prediction
+        
+        # If ML prediction fails or model not available, use rule-based approach
         # Initialize disease counter
         disease_counts = {}
         
