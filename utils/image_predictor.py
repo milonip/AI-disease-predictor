@@ -161,27 +161,42 @@ def get_image_prediction(image_bytes):
         # Improved scoring criteria based on dermatological standards
         
         # 0: Actinic Keratoses - typically red/pink, rough, scaly patches
+        # Require stricter criteria for pathological conditions
+        ak_color_match = (r_g_ratio > 1.2) and (r_b_ratio > 1.3) and (red_intensity > 150)
+        
         scores[0] = (
-            ((red_intensity / 255) * 20) +                          # Red coloration
-            ((r_g_ratio > 1.1) * 15) +                              # Red dominance
-            ((r_b_ratio > 1.2) * 15) +                              # Red over blue
-            (min(red_std / 40, 1.0) * 15) +                         # Color variation within red channel
+            ((red_intensity / 255) * 15) +                          # Red coloration
+            ((r_g_ratio > 1.2) * 10) +                              # Strong red dominance
+            ((r_b_ratio > 1.3) * 10) +                              # Strong red over blue
+            (min(red_std / 40, 1.0) * 10) +                         # Color variation within red channel
             ((120 < brightness < 180) * 10) +                       # Medium brightness
             ((symmetry_score > 0.7) * 10) +                         # Usually symmetric
             ((border_irregularity < 0.5) * 10) +                    # Fairly regular borders
-            ((1.0 - color_consistency) * 15)                        # Some color inconsistency
-        ) / 110 * 100  # Normalize to percentage
+            ((1.0 - color_consistency) * 10) +                      # Some color inconsistency
+            (ak_color_match * 15)                                   # Typical AK color profile
+        ) / 100 * 100  # Normalize to percentage - lower score by default
         
         # 1: Basal Cell Carcinoma - pearly/waxy bumps, often with visible blood vessels
+        
+        # Specific characteristics for BCC - need to be more strict
+        bcc_color_profile = (
+            (red_intensity > 150) and
+            (blue_intensity > 100) and
+            (red_std > 45)
+        )
+        bcc_red_variations = red_std > 50 and red_std < 90
+        
+        # Make BCC detection more selective
         scores[1] = (
-            (min(1.0, edge_intensity / 30.0) * 15) +               # Distinct borders
-            ((brightness > 140 and brightness < 200) * 15) +        # Brighter but not extremely bright
-            ((color_variation > 40 and color_variation < 70) * 15) + # Moderate color variation
-            ((contrast > 80 and contrast < 150) * 10) +             # Good contrast but not extreme
-            ((border_irregularity > 0.4 and border_irregularity < 0.7) * 15) + # Moderate irregularity
-            ((red_std > 50 and red_std < 80) * 15) +                # Moderate red variance (blood vessels)
-            ((symmetry_score < 0.75 and symmetry_score > 0.4) * 10) # Moderate asymmetry
-        ) / 95 * 100  # Normalize to percentage
+            (min(1.0, edge_intensity / 35.0) * 10) +               # Distinct borders but require stronger evidence
+            ((brightness > 150 and brightness < 190) * 10) +        # Brighter appearance, narrower range
+            ((color_variation > 45 and color_variation < 65) * 10) + # Specific color variation range
+            ((contrast > 90 and contrast < 140) * 10) +             # Good contrast in specific range
+            ((border_irregularity > 0.45 and border_irregularity < 0.65) * 10) + # Specific irregularity pattern
+            (bcc_red_variations * 15) +                             # Blood vessel signature in specific range
+            ((symmetry_score < 0.7 and symmetry_score > 0.45) * 10) + # Moderate asymmetry
+            (bcc_color_profile * 15)                                # BCC-specific color profile
+        ) / 90 * 100  # Normalize to percentage
         
         # 2: Benign Keratosis - brown, well-circumscribed with waxy surface
         
@@ -245,17 +260,25 @@ def get_image_prediction(image_bytes):
         # Nevi are typically brown and uniform
         brown_dominance = brown_pixel_ratio > 0.3
         
-        # Enhanced criteria for nevi (common moles)
+        # Enhanced criteria for nevi (common moles) - most common diagnosis
+        # Add a slight bias toward this common condition
+        
+        # Extra diagnostic color patterns for nevi (light/medium brown)
+        is_light_brown = (red_intensity > green_intensity > blue_intensity) and (red_intensity < 170)
+        
+        # Combined criteria for nevi - most common diagnosis so use broader criteria
         scores[5] = (
-            ((color_variation < 45) * 15) +                         # Low-moderate color variation
+            ((color_variation < 50) * 15) +                         # Low-moderate color variation
             ((normalized_edge < 1.0 and normalized_edge > 0.2) * 15) + # Soft but present edges
-            ((brightness > 80 and brightness < 180) * 15) +         # Typical mole brightness range
-            ((red_std < 50 and green_std < 50 and blue_std < 50) * 15) + # Color uniformity
-            ((symmetry_score > 0.6) * 15) +                         # Good symmetry
-            ((color_consistency > 0.7) * 15) +                      # Consistent color
-            ((border_irregularity < 0.5) * 15) +                    # Regular borders
-            (brown_dominance * 20)                                  # Typical brown color
-        ) / 125 * 100  # Normalize to percentage
+            ((brightness > 70 and brightness < 190) * 15) +         # Broader brightness range
+            ((red_std < 60 and green_std < 60 and blue_std < 60) * 10) + # More flexible color uniformity
+            ((symmetry_score > 0.5) * 15) +                         # Reasonable symmetry (lowered threshold)
+            ((color_consistency > 0.6) * 15) +                      # Fairly consistent color
+            ((border_irregularity < 0.6) * 15) +                    # Fairly regular borders
+            (brown_dominance * 20) +                                # Typical brown color
+            (is_light_brown * 10) +                                 # Light brown bonus
+            5.0                                                     # Small inherent bias (common condition)
+        ) / 135 * 100  # Normalize to percentage
         
         # 6: Vascular Lesions - red/purple color, can be flat or raised
         scores[6] = (
