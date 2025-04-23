@@ -2,17 +2,12 @@ import numpy as np
 from PIL import Image
 import io
 import os
+import math
 from utils.data_loader import get_skin_disease_labels
 
 def preprocess_image(image_bytes):
     """
     Preprocess image for analysis.
-    
-    Args:
-        image_bytes: Image as bytes
-        
-    Returns:
-        image: Processed PIL image
     """
     # Convert bytes to PIL Image
     image = Image.open(io.BytesIO(image_bytes))
@@ -24,185 +19,175 @@ def preprocess_image(image_bytes):
 
 def get_image_prediction(image_bytes):
     """
-    Predict skin disease based on image using a deterministic color-based approach.
-    
-    Args:
-        image_bytes: Image as bytes
-        
-    Returns:
-        tuple: (predicted_disease, confidence_percentage)
+    Predict skin disease based on basic color analysis.
+    Uses a simplified decision tree based on color profiles.
     """
     try:
         # Process the image
         image = preprocess_image(image_bytes)
-        
-        # Get skin disease labels
         disease_labels = get_skin_disease_labels()
         
         # Convert to numpy array for analysis
         img_array = np.array(image)
         
-        # Extract basic color features
-        red_channel = img_array[:, :, 0].astype(float)
-        green_channel = img_array[:, :, 1].astype(float)
-        blue_channel = img_array[:, :, 2].astype(float)
+        # Basic color analysis
+        red_mean = np.mean(img_array[:, :, 0])
+        green_mean = np.mean(img_array[:, :, 1])
+        blue_mean = np.mean(img_array[:, :, 2])
         
-        # Calculate basic statistics
-        red_mean = np.mean(red_channel)
-        green_mean = np.mean(green_channel)
-        blue_mean = np.mean(blue_channel)
+        # Color dispersion (std of each channel)
+        red_std = np.std(img_array[:, :, 0])
+        green_std = np.std(img_array[:, :, 1])
+        blue_std = np.std(img_array[:, :, 2])
         
-        red_std = np.std(red_channel)
-        green_std = np.std(green_channel)
-        blue_std = np.std(blue_channel)
-        
+        # Overall brightness and contrast
         brightness = np.mean(img_array)
         darkness = 255 - brightness
         
         # Color ratios
-        r_g_ratio = red_mean / max(1, green_mean)
-        r_b_ratio = red_mean / max(1, blue_mean)
-        g_b_ratio = green_mean / max(1, blue_mean)
+        red_ratio = red_mean / (red_mean + green_mean + blue_mean) if (red_mean + green_mean + blue_mean) > 0 else 0
+        green_ratio = green_mean / (red_mean + green_mean + blue_mean) if (red_mean + green_mean + blue_mean) > 0 else 0
+        blue_ratio = blue_mean / (red_mean + green_mean + blue_mean) if (red_mean + green_mean + blue_mean) > 0 else 0
         
-        # Calculate proportion of pixels in specific color ranges
-        total_pixels = img_array.shape[0] * img_array.shape[1]
+        # Redness test (ratio of red to other channels)
+        redness = (red_mean / max(1, (green_mean + blue_mean) / 2))
         
-        # Dark pixels (may indicate melanoma)
-        dark_pixels = np.sum(np.mean(img_array, axis=2) < 60)
-        dark_ratio = dark_pixels / total_pixels
+        # Brownness test (high red, medium green, low blue)
+        brownness = ((red_mean - blue_mean) / max(1, green_mean)) if red_mean > green_mean > blue_mean else 0
         
-        # Brown pixels (common in nevi and benign keratosis)
-        brown_pixels = np.sum(
-            (red_channel > 80) & (red_channel < 180) &
-            (green_channel > 50) & (green_channel < 150) &
-            (blue_channel > 30) & (blue_channel < 100)
-        )
-        brown_ratio = brown_pixels / total_pixels
+        # Color homogeneity (average std across channels)
+        color_variation = (red_std + green_std + blue_std) / 3
         
-        # Reddish pixels (common in actinic keratoses, vascular lesions)
-        red_pixels = np.sum(
-            (red_channel > 150) &
-            (red_channel > green_channel * 1.2) &
-            (red_channel > blue_channel * 1.2)
-        )
-        red_ratio = red_pixels / total_pixels
+        # Print diagnostic information
+        print(f"RGB Means: R={red_mean:.1f}, G={green_mean:.1f}, B={blue_mean:.1f}")
+        print(f"RGB Stds: R={red_std:.1f}, G={green_std:.1f}, B={blue_std:.1f}")
+        print(f"Color Ratios: R={red_ratio:.2f}, G={green_ratio:.2f}, B={blue_ratio:.2f}")
+        print(f"Brightness: {brightness:.1f}, Redness: {redness:.2f}, Brownness: {brownness:.2f}")
+        print(f"Color Variation: {color_variation:.2f}")
         
-        # Lighter brown/tan pixels (common in benign keratosis)
-        tan_pixels = np.sum(
-            (red_channel > 120) & (red_channel < 200) &
-            (green_channel > 100) & (green_channel < 180) &
-            (blue_channel > 60) & (blue_channel < 140) &
-            (red_channel > blue_channel)
-        )
-        tan_ratio = tan_pixels / total_pixels
+        # Create a very simplified decision tree
         
-        # Calculate color variation
-        color_std = np.std([red_mean, green_mean, blue_mean])
-        overall_std = np.sqrt(red_std**2 + green_std**2 + blue_std**2) / 3
-        
-        # Simple edge detection
-        h_gradient = np.mean(np.abs(img_array[:, 1:] - img_array[:, :-1]))
-        v_gradient = np.mean(np.abs(img_array[1:, :] - img_array[:-1, :]))
-        edge_strength = (h_gradient + v_gradient) / 2
-        edge_ratio = edge_strength / brightness if brightness > 0 else 0
-        
-        # Print diagnostic info
-        print(f"Color stats: R={red_mean:.1f}±{red_std:.1f}, G={green_mean:.1f}±{green_std:.1f}, B={blue_mean:.1f}±{blue_std:.1f}")
-        print(f"Ratios: R/G={r_g_ratio:.2f}, R/B={r_b_ratio:.2f}, G/B={g_b_ratio:.2f}")
-        print(f"Color variation: {color_std:.2f}, Overall std: {overall_std:.2f}")
-        print(f"Pixel analysis: Brown={brown_ratio:.2f}, Red={red_ratio:.2f}, Tan={tan_ratio:.2f}, Dark={dark_ratio:.2f}")
-        print(f"Edge strength: {edge_strength:.2f}, Edge ratio: {edge_ratio:.4f}")
-        
-        # ----------------------
-        # SIMPLIFIED COLOR-BASED PREDICTION SYSTEM
-        # ----------------------
-        
-        # Initialize scores
-        scores = [0.0] * len(disease_labels)
-        
-        # 0: Actinic Keratoses - typically reddish, patchy
-        scores[0] = (
-            (min(red_ratio * 300, 40)) +               # Red component
-            (min(r_g_ratio * 20, 15) if r_g_ratio > 1.15 else 0) +  # Red dominance
-            (min(r_b_ratio * 15, 15) if r_b_ratio > 1.2 else 0) +   # Red over blue
-            (min(overall_std * 0.5, 15)) +            # Some variation
-            (15 if 130 < brightness < 190 else 0)      # Medium-high brightness
+        # Check for Melanocytic nevi (common moles) - most common condition
+        # Usually brown or tan, fairly uniform in color
+        is_nevus = (
+            (red_mean > green_mean > blue_mean) and   # Brown color pattern
+            (green_mean > 70) and                     # Not too dark
+            (red_mean < 180) and                      # Not too light/pink
+            (color_variation < 60) and                # Fairly uniform color
+            (brownness > 0.4)                         # Definite brown tone
         )
         
-        # 1: Basal Cell Carcinoma - pearly/waxy appearance
-        scores[1] = (
-            (min(edge_ratio * 100, 15)) +             # Defined borders
-            (min(red_std * 0.15, 20)) +               # Red variation (blood vessels)
-            (15 if brightness > 150 else 0) +         # Brighter lesion
-            (15 if red_mean > 140 and blue_mean > 110 else 0) +  # Pinkish color
-            (15 if color_std < 20 else 0)             # Less color variation between channels
+        # Check for Melanoma - typically darker, more varied in color
+        is_melanoma = (
+            (brightness < 120) and                    # Darker
+            (color_variation > 50) and                # More varied color
+            ((red_std > 50) or (green_std > 50) or (blue_std > 50))  # High variability
         )
         
-        # 2: Benign Keratosis - brown, waxy appearance
-        scores[2] = (
-            (min(tan_ratio * 150, 40)) +              # Tan/light brown color
-            (min(brown_ratio * 100, 20)) +            # Brown component
-            (20 if r_g_ratio > 1.0 and r_g_ratio < 1.4 and r_b_ratio > 1.2 else 0) + # Brown tone
-            (10 if brightness > 100 and brightness < 160 else 0) + # Medium brightness
-            (10 if edge_strength > 10 and edge_strength < 30 else 0)  # Moderate edges
+        # Check for Benign keratosis - medium brownish, often scaly
+        is_benign_keratosis = (
+            (red_mean > green_mean > blue_mean) and   # Brown color pattern
+            (red_mean > 100) and (red_mean < 180) and # Medium to light brown
+            (green_mean > 80) and                     # Not too dark
+            (blue_mean < 110) and                     # Typical of keratosis
+            (color_variation < 65)                    # Moderate uniformity
         )
         
-        # 3: Dermatofibroma - small, firm, red-brown bump
-        scores[3] = (
-            (min(tan_ratio * 100, 20)) +              # Tan component
-            (min(red_ratio * 100, 20)) +              # Red component
-            (20 if r_g_ratio > 0.9 and r_g_ratio < 1.3 else 0) + # Balanced red-green
-            (15 if g_b_ratio > 1.2 else 0) +          # Green over blue
-            (25 if 110 < brightness < 150 else 0)     # Medium brightness
+        # Check for Basal cell carcinoma - often pink/red areas with defined border
+        is_bcc = (
+            (red_mean > 150) and                      # Redness
+            (green_mean > 130) and                    # Lighter appearance
+            (blue_mean > 120) and                     # Pinkish tint
+            (redness > 1.05 and redness < 1.2)        # Moderate redness
         )
         
-        # 4: Melanoma - dark, varied color
-        scores[4] = (
-            (min(dark_ratio * 250, 30)) +             # Dark component
-            (min(overall_std * 0.7, 25)) +            # Large variation
-            (25 if brightness < 120 else 0) +         # Darker overall
-            (10 if color_std > 15 else 0) +           # Color variation between channels
-            (10 if edge_ratio > 0.15 else 0)          # Defined borders
+        # Check for Actinic keratoses - typically red, scaly patches
+        is_actinic_keratosis = (
+            (red_mean > 150) and                      # Red component
+            (red_mean > green_mean * 1.15) and        # Red dominance
+            (red_mean > blue_mean * 1.2) and          # Red over blue
+            (redness > 1.2)                           # High redness
         )
         
-        # 5: Melanocytic Nevi - common moles, typically brown and uniform
-        scores[5] = (
-            (min(brown_ratio * 200, 40)) +            # Strong brown component
-            (10 if overall_std < 50 else 0) +         # Less variation
-            (15 if r_g_ratio > 1.1 and r_g_ratio < 1.5 else 0) + # Brown tone
-            (15 if g_b_ratio > 1.1 else 0) +          # Green over blue (typical of brown)
-            (10 if brightness > 80 and brightness < 160 else 0) + # Medium brightness
-            (10 if edge_ratio < 0.15 else 0) +        # Softer borders
-            # Bonus for most common condition
-            (15 if brown_ratio > 0.3 and overall_std < 60 else 0) # Typical mole appearance
+        # Check for Vascular lesions - typically red/purple
+        is_vascular = (
+            (red_mean > 120) and                      # Moderate to high red
+            (blue_mean > 100) and                     # Higher blue (for purple)
+            (green_mean < red_mean) and               # Red dominance
+            (green_mean < blue_mean)                  # Purplish tint
         )
         
-        # 6: Vascular Lesions - red/purple color
-        scores[6] = (
-            (min(red_ratio * 200, 35)) +              # Strong red component
-            (15 if r_g_ratio > 1.1 else 0) +          # Red dominance
-            (15 if blue_mean > 80 else 0) +           # Blue component (for purple)
-            (15 if green_mean < red_mean and green_mean < blue_mean else 0) + # Green lowest
-            (10 if brightness > 100 and brightness < 170 else 0) + # Medium brightness
-            (10 if edge_ratio < 0.12 else 0)          # Softer borders
+        # Check for Dermatofibroma - red-brown, firmer appearance
+        is_dermatofibroma = (
+            (red_mean > green_mean > blue_mean) and   # Red-brown pattern
+            (80 < brightness < 150) and               # Medium brightness
+            (green_mean > blue_mean * 1.15) and       # Green over blue
+            (brownness > 0.3 and brownness < 0.7)     # Moderate brownness
         )
         
-        # Get prediction based on highest score
-        print(f"Scores: AK={scores[0]:.1f}, BCC={scores[1]:.1f}, BK={scores[2]:.1f}, DF={scores[3]:.1f}, MEL={scores[4]:.1f}, NEV={scores[5]:.1f}, VASC={scores[6]:.1f}")
+        # Initialize prediction
+        prediction = None
+        confidence = 0.0
         
-        predicted_index = np.argmax(scores)
-        predicted_disease = disease_labels[predicted_index]
-        max_score = scores[predicted_index]
+        # Simple forced categories based on the most distinctive features
+        if is_nevus:
+            # Melanocytic nevi is the most common skin lesion
+            prediction = "Melanocytic nevi"
+            confidence = 80.0 + min(brownness * 10, 15)
+        elif is_melanoma:
+            prediction = "Melanoma"
+            confidence = 75.0 + min(color_variation / 5, 15)
+        elif is_benign_keratosis:
+            prediction = "Benign keratosis-like lesions"
+            confidence = 75.0 + min(brownness * 15, 15)
+        elif is_bcc:
+            prediction = "Basal cell carcinoma"
+            confidence = 70.0 + min(redness * 10, 15)
+        elif is_actinic_keratosis:
+            prediction = "Actinic keratoses and intraepithelial carcinoma"
+            confidence = 70.0 + min(redness * 10, 15)
+        elif is_vascular:
+            prediction = "Vascular lesions"
+            confidence = 70.0 + min(red_ratio * 50, 15)
+        elif is_dermatofibroma:
+            prediction = "Dermatofibroma"
+            confidence = 70.0
+        else:
+            # If no strong match, try to find the best category
+            scores = [0] * len(disease_labels)
+            
+            # Actinic keratoses and intraepithelial carcinoma (0)
+            scores[0] = redness * 40
+            
+            # Basal cell carcinoma (1)
+            scores[1] = (redness * 15) + ((red_mean + green_mean + blue_mean) / 450 * 30) + (red_std / 50 * 15)
+            
+            # Benign keratosis-like lesions (2)
+            scores[2] = brownness * 50 + (1 - (color_variation / 100)) * 20
+            
+            # Dermatofibroma (3)
+            scores[3] = brownness * 25 + redness * 15 + (brightness / 150) * 20
+            
+            # Melanoma (4)
+            scores[4] = (color_variation / 70) * 30 + (darkness / 150) * 40
+            
+            # Melanocytic nevi (5) - default to this most common condition
+            scores[5] = brownness * 40 + (1 - (color_variation / 100)) * 30 + 10  # bonus for most common
+            
+            # Vascular lesions (6)
+            scores[6] = redness * 30 + (blue_ratio * 30)
+            
+            # Get best match
+            best_index = np.argmax(scores)
+            prediction = disease_labels[best_index]
+            confidence = 65 + min(scores[best_index] / 3, 25)  # Scale to reasonable range
+            
+        print(f"Decision factors - Nevus:{is_nevus}, BK:{is_benign_keratosis}, Melanoma:{is_melanoma}, BCC:{is_bcc}")
+        print(f"Final prediction: {prediction} with confidence {confidence:.1f}%")
         
-        # Map score to confidence (65-95% range)
-        normalized_max = max(10, min(max_score, 100))  # Clip to reasonable range
-        confidence = 65 + (normalized_max / 100) * 30  # Scale to 65-95% range
-        
-        print(f"Prediction: {predicted_disease} with confidence {confidence:.2f}%")
-        return predicted_disease, confidence
+        return prediction, confidence
         
     except Exception as e:
         print(f"Error in image prediction: {e}")
-        
-        # Default to the most common condition on error
+        # Default to melanocytic nevi (most common)
         return "Melanocytic nevi", 65.0
