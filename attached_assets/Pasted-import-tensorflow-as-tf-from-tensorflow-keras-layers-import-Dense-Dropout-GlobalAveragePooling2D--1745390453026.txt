@@ -1,0 +1,75 @@
+import tensorflow as tf
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D, BatchNormalization
+from tensorflow.keras.models import Model
+import numpy as np
+from sklearn.utils.class_weight import compute_class_weight
+
+# Debug Dataset (Already Verified)
+def inspect_dataset(dataset, name="Dataset"):
+    print(f"\nInspecting {name}:")
+    for images, labels in dataset.take(1):
+        print("Image Shape:", images.shape)
+        print("Image Min/Max:", tf.reduce_min(images).numpy(), tf.reduce_max(images).numpy())
+        print("Label Shape:", labels.shape)
+        print("Sample Labels:", labels[:5].numpy())
+    return dataset
+
+train_ds = inspect_dataset(train_ds, "train_ds")
+val_ds = inspect_dataset(val_ds, "val_ds")
+
+# Class Weights
+train_labels = [np.argmax(label.numpy()) for _, label in train_ds.unbatch()]
+train_labels = np.array(train_labels)
+class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
+class_weight_dict = dict(enumerate(class_weights))
+print("Class Weights:", class_weight_dict)
+
+num_classes = 7
+
+# Data Augmentation (Moderate, from Previous Best)
+data_augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.2),
+    tf.keras.layers.RandomZoom(0.2),
+    tf.keras.layers.RandomContrast(0.2),
+])
+
+# Model
+inputs = tf.keras.Input(shape=(224, 224, 3))
+x = data_augmentation(inputs)
+x = tf.keras.applications.EfficientNetB3(include_top=False, weights="imagenet")(x)  # No freezing
+x = GlobalAveragePooling2D()(x)
+x = BatchNormalization()(x)  # Added for stability
+x = Dense(256, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)  # Lighter L2
+x = Dropout(0.4)(x)  # Matches previous best
+outputs = Dense(num_classes, activation="softmax")(x)
+model = Model(inputs, outputs)
+
+# Compile
+model.compile(
+    optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-4, clipnorm=1.0),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Callbacks
+callbacks = [
+    tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+    tf.keras.callbacks.ModelCheckpoint("best_model.keras", save_best_only=True, monitor='val_loss'),
+    tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6)
+]
+
+# Train (Single Phase)
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=20,
+    callbacks=callbacks,
+    class_weight=class_weight_dict,
+    verbose=1
+)
+
+# Save and Evaluate
+model.save("skin_disease_model_v4.keras")
+val_loss, val_accuracy = model.evaluate(val_ds)
+print(f"Final Validation Accuracy: {val_accuracy:.4f}, Validation Loss: {val_loss:.4f}")
