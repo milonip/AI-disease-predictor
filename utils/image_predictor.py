@@ -82,20 +82,42 @@ def get_image_prediction(image_bytes):
         symmetry_diff = np.mean(np.abs(left_half[:, :min_width, :] - right_half_flipped[:, :min_width, :]))
         symmetry_score = 1.0 - min(1.0, symmetry_diff / 50.0)
         
-        # Check for border regularity (using edge detection)
-        edge_pixels = (h_gradient > 20) | (v_gradient > 20)
-        edge_pixels_count = np.sum(edge_pixels)
-        # Measure the compactness of the edges
-        if edge_pixels_count > 0:
-            edge_indices = np.where(edge_pixels)
-            edge_x = edge_indices[1]
-            edge_y = edge_indices[0]
-            # Calculate the standard deviation of edge positions as a measure of irregularity
-            edge_std_x = np.std(edge_x) if len(edge_x) > 0 else 0
-            edge_std_y = np.std(edge_y) if len(edge_y) > 0 else 0
-            border_irregularity = min(1.0, (edge_std_x + edge_std_y) / 100.0)
-        else:
-            border_irregularity = 0.0
+        # Check for border regularity using a more robust approach
+        try:
+            # Handle gradient calculation more safely
+            h_gradient_array = np.mean(np.abs(img_array[:, 1:] - img_array[:, :-1]), axis=2)
+            v_gradient_array = np.mean(np.abs(img_array[1:, :] - img_array[:-1, :]), axis=2)
+            
+            # Create threshold masks
+            h_edge_mask = h_gradient_array > 20
+            v_edge_mask = v_gradient_array > 20
+            
+            # Count edge pixels
+            h_edge_count = np.sum(h_edge_mask)
+            v_edge_count = np.sum(v_edge_mask)
+            
+            # Calculate irregularity based on edge variance
+            if h_edge_count > 0:
+                edge_y, edge_x = np.nonzero(h_edge_mask)
+                h_std_x = np.std(edge_x) if len(edge_x) > 0 else 0
+                h_std_y = np.std(edge_y) if len(edge_y) > 0 else 0
+                h_irregularity = (h_std_x + h_std_y) / 100.0
+            else:
+                h_irregularity = 0.0
+                
+            if v_edge_count > 0:
+                edge_y, edge_x = np.nonzero(v_edge_mask)
+                v_std_x = np.std(edge_x) if len(edge_x) > 0 else 0
+                v_std_y = np.std(edge_y) if len(edge_y) > 0 else 0
+                v_irregularity = (v_std_x + v_std_y) / 100.0
+            else:
+                v_irregularity = 0.0
+                
+            # Combine irregularity measures
+            border_irregularity = min(1.0, max(h_irregularity, v_irregularity))
+        except Exception as e:
+            print(f"Edge detection error: {e}")
+            border_irregularity = 0.5  # Default to medium irregularity on error
             
         # Color distribution and variation across different parts of the lesion
         # Divide the image into 9 regions and analyze color consistency
@@ -134,7 +156,7 @@ def get_image_prediction(image_bytes):
         
         # 1: Basal Cell Carcinoma - pearly/waxy bumps, often with visible blood vessels
         scores[1] = (
-            ((edge_intensity * 0.4) * 20) +                         # Distinct borders
+            (min(1.0, edge_intensity / 30.0) * 20) +               # Distinct borders
             ((brightness > 140) * 15) +                             # Brighter appearance
             ((color_variation > 40) * 15) +                         # Moderate color variation
             ((contrast > 80) * 10) +                                # Good contrast
@@ -148,7 +170,7 @@ def get_image_prediction(image_bytes):
             ((color_variation > 30 and color_variation < 60) * 20) + # Moderate color variation
             ((red_intensity < 150 and green_intensity < 150 and blue_intensity < 150) * 15) + # Darker colors
             ((brightness < 150) * 10) +                             # Not too bright
-            ((edge_intensity > 10) * 15) +                          # Clear edges
+            ((min(1.0, edge_intensity / 15.0) > 0.6) * 15) +        # Clear edges
             ((symmetry_score > 0.8) * 15) +                         # Good symmetry
             ((border_irregularity < 0.4) * 15) +                    # Regular borders
             ((texture_score > 0.3) * 10)                            # Some texture
@@ -159,7 +181,7 @@ def get_image_prediction(image_bytes):
             ((100 < brightness < 150) * 20) +                       # Medium brightness
             ((color_variation < 45) * 15) +                         # Limited color variation
             ((r_g_ratio < 1.3 and r_g_ratio > 0.9) * 15) +          # Balanced red-green
-            ((edge_intensity < 25 and edge_intensity > 10) * 15) +  # Moderate edges
+            ((min(1.0, edge_intensity / 15.0) < 0.9 and min(1.0, edge_intensity / 15.0) > 0.4) * 15) + # Moderate edges
             ((symmetry_score > 0.85) * 15) +                        # High symmetry
             ((color_consistency > 0.7) * 10) +                      # Consistent color
             ((border_irregularity < 0.3) * 10)                      # Very regular borders
@@ -177,9 +199,10 @@ def get_image_prediction(image_bytes):
         ) / 115 * 100  # Normalize to percentage
         
         # 5: Melanocytic Nevi - symmetric, uniform colored moles
+        normalized_edge = min(1.0, edge_intensity / 15.0)
         scores[5] = (
             ((color_variation < 40) * 20) +                         # Low color variation
-            ((edge_intensity < 20 and edge_intensity > 5) * 15) +   # Soft but present edges
+            ((normalized_edge < 0.9 and normalized_edge > 0.2) * 15) +   # Soft but present edges
             ((brightness > 90) * 10) +                              # Not too dark
             ((red_std < 40 and green_std < 40 and blue_std < 40) * 15) + # Color uniformity
             ((symmetry_score > 0.8) * 20) +                         # High symmetry
@@ -202,15 +225,17 @@ def get_image_prediction(image_bytes):
         predicted_class_index = np.argmax(scores)
         predicted_disease = disease_labels[predicted_class_index]
         
-        # Calculate confidence as a percentage of max possible score
-        max_theoretical_score = 40  # Based on the score calculations above
-        raw_confidence = (scores[predicted_class_index] / max_theoretical_score) * 100
+        # Calculate confidence correctly - all scores are already in percentage format
+        raw_confidence = scores[predicted_class_index]
         
         # Scale confidence to a reasonable range
         confidence = min(95.0, max(65.0, raw_confidence))
         
-        # Print diagnostics for debugging (you can remove this in production)
+        # Print detailed diagnostics for debugging
         print(f"Feature analysis: dark_ratio={dark_ratio:.2f}, brightness={brightness:.2f}, variation={color_variation:.2f}")
+        print(f"Symmetry={symmetry_score:.2f}, Border Irregularity={border_irregularity:.2f}, Color Consistency={color_consistency:.2f}")
+        print(f"RGB Intensities: R={red_intensity:.1f}, G={green_intensity:.1f}, B={blue_intensity:.1f}")
+        print(f"All Scores: AK={scores[0]:.1f}, BCC={scores[1]:.1f}, BK={scores[2]:.1f}, DF={scores[3]:.1f}, Mel={scores[4]:.1f}, MN={scores[5]:.1f}, Vasc={scores[6]:.1f}")
         print(f"Prediction: {predicted_disease} with confidence {confidence:.2f}%")
         
         return predicted_disease, confidence
