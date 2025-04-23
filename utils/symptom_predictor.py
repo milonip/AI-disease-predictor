@@ -278,17 +278,98 @@ def get_symptom_prediction(selected_symptoms):
             # If still no match, return the most common condition with low confidence
             return "Common Cold", 65.0
         
-        # Sort diseases by frequency
+        # Advanced analytics for symptom-based prediction
+        # 1. Sort diseases by frequency
         sorted_diseases = sorted(disease_counts.items(), key=lambda x: x[1], reverse=True)
         
-        # Calculate confidence based on how many symptoms match
-        top_disease, count = sorted_diseases[0]
-        # Count how many symptoms are associated with the top disease
-        total_possible_symptoms = 0
-        for symptoms in symptom_disease_map.values():
-            if top_disease in symptoms:
-                total_possible_symptoms += 1
-        confidence = min(95.0, (count / max(1, len(selected_symptoms))) * 100)
+        # 2. Check for how well the symptoms match with what we expect for the disease
+        disease_symptom_match = {}
+        
+        # Count total symptoms commonly associated with each disease
+        disease_total_symptoms = {}
+        for symptom, diseases in symptom_disease_map.items():
+            for disease in diseases:
+                if disease in disease_total_symptoms:
+                    disease_total_symptoms[disease] += 1
+                else:
+                    disease_total_symptoms[disease] = 1
+        
+        # For each candidate disease, calculate match quality
+        for disease, count in sorted_diseases:
+            # Get observed symptoms for this disease
+            matched_symptoms = []
+            for symptom in selected_symptoms:
+                if symptom in symptom_disease_map and disease in symptom_disease_map[symptom]:
+                    matched_symptoms.append(symptom)
+            
+            # Calculate match metrics
+            if disease in disease_total_symptoms:
+                total_expected = disease_total_symptoms[disease]
+                
+                # Specificity: What percentage of the disease's common symptoms were observed?
+                specificity = count / total_expected
+                
+                # Sensitivity: What percentage of the observed symptoms match this disease?
+                sensitivity = count / len(selected_symptoms)
+                
+                # Calculate weighted score - emphasize specificity more
+                match_score = (specificity * 0.6) + (sensitivity * 0.4)
+                
+                # Additional bonus for diseases with more total matches
+                match_score = match_score * (1.0 + min(0.5, count / 10.0))
+                
+                disease_symptom_match[disease] = match_score
+            else:
+                disease_symptom_match[disease] = 0.0
+        
+        # Re-rank diseases based on match quality rather than just count
+        sorted_diseases = sorted(disease_symptom_match.items(), key=lambda x: x[1], reverse=True)
+        
+        # Add a tiebreaker for closely scored diseases - prefer more specific diagnoses
+        if len(sorted_diseases) >= 2:
+            top_disease, top_score = sorted_diseases[0]
+            second_disease, second_score = sorted_diseases[1]
+            
+            # If scores are close, check which disease is more specific (has fewer total symptoms)
+            if (top_score - second_score) < 0.1:  # If scores are within 10%
+                if top_disease in disease_total_symptoms and second_disease in disease_total_symptoms:
+                    # If second disease is more specific (has fewer symptoms), it might be more accurate
+                    if disease_total_symptoms[second_disease] < disease_total_symptoms[top_disease]:
+                        # But only switch if the second disease still has a good match count
+                        if disease_counts[second_disease] >= max(2, disease_counts[top_disease] * 0.8):
+                            top_disease = second_disease
+                            top_score = second_score
+        else:
+            # Fallback if no diseases matched
+            top_disease, top_score = sorted_diseases[0] if sorted_diseases else ("Common Cold", 0.0)
+        
+        # Calculate confidence based on the improved match score
+        raw_confidence = top_score * 100
+        
+        # Add correction factors
+        num_matched = disease_counts[top_disease]
+        num_symptoms = len(selected_symptoms)
+        
+        # More symptoms = more confidence, but only if they match well
+        symptom_factor = min(1.2, 0.8 + (num_symptoms / 15))
+        
+        # Higher confidence if we matched most of the disease's known symptoms
+        if top_disease in disease_total_symptoms and disease_total_symptoms[top_disease] > 0:
+            coverage = num_matched / disease_total_symptoms[top_disease]
+            coverage_factor = min(1.2, 0.7 + coverage)
+        else:
+            coverage = 0.0
+            coverage_factor = 1.0
+        
+        # Scale the confidence
+        confidence = min(95.0, raw_confidence * symptom_factor * coverage_factor)
+        
+        # Floor confidence at 65% to avoid too uncertain predictions
+        confidence = max(65.0, confidence)
+        
+        # Print diagnostics for debugging
+        print(f"Symptom prediction: {top_disease} with {num_matched} of {num_symptoms} symptoms")
+        print(f"Coverage: {coverage_factor:.2f}, Final confidence: {confidence:.2f}%")
         
         return top_disease, confidence
     
