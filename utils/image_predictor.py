@@ -71,10 +71,11 @@ def get_image_prediction(image_bytes):
         # Usually brown or tan, fairly uniform in color
         is_nevus = (
             (red_mean > green_mean > blue_mean) and   # Brown color pattern
-            (green_mean > 70) and                     # Not too dark
-            (red_mean < 180) and                      # Not too light/pink
-            (color_variation < 60) and                # Fairly uniform color
-            (brownness > 0.4)                         # Definite brown tone
+            (red_ratio > 0.38) and                    # Red component strong
+            (blue_ratio < 0.30) and                   # Blue relatively low (for brown color)
+            (green_mean > 60) and                     # Not too dark
+            (color_variation < 70) and                # More flexible uniformity
+            (brownness > 0.3)                         # Brown tone, lower threshold
         )
         
         # Check for Melanoma - typically darker, more varied in color
@@ -87,9 +88,10 @@ def get_image_prediction(image_bytes):
         # Check for Benign keratosis - medium brownish, often scaly
         is_benign_keratosis = (
             (red_mean > green_mean > blue_mean) and   # Brown color pattern
-            (red_mean > 100) and (red_mean < 180) and # Medium to light brown
-            (green_mean > 80) and                     # Not too dark
-            (blue_mean < 110) and                     # Typical of keratosis
+            (red_mean > 100) and (red_mean < 200) and # Medium to light brown
+            (red_ratio > 0.40) and                    # Strong red component
+            (green_mean > 70) and                     # Not too dark
+            (blue_ratio < 0.29) and                   # Low blue is distinctive
             (color_variation < 65)                    # Moderate uniformity
         )
         
@@ -98,15 +100,19 @@ def get_image_prediction(image_bytes):
             (red_mean > 150) and                      # Redness
             (green_mean > 130) and                    # Lighter appearance
             (blue_mean > 120) and                     # Pinkish tint
+            (color_variation < 35) and                # Uniform appearance
+            (red_mean / green_mean < 1.15) and        # Not too red (distinguishes from actinic)
             (redness > 1.05 and redness < 1.2)        # Moderate redness
         )
         
         # Check for Actinic keratoses - typically red, scaly patches
         is_actinic_keratosis = (
-            (red_mean > 150) and                      # Red component
+            (red_mean > 160) and                      # Red component
             (red_mean > green_mean * 1.15) and        # Red dominance
             (red_mean > blue_mean * 1.2) and          # Red over blue
-            (redness > 1.2)                           # High redness
+            (red_ratio > 0.40) and                    # High red ratio
+            (blue_ratio < 0.35) and                   # Lower blue
+            (redness > 1.3)                           # Higher redness threshold
         )
         
         # Check for Vascular lesions - typically red/purple
@@ -156,26 +162,44 @@ def get_image_prediction(image_bytes):
             # If no strong match, try to find the best category
             scores = [0] * len(disease_labels)
             
+            # Carefully analyze the logs to improve scoring
+            
             # Actinic keratoses and intraepithelial carcinoma (0)
-            scores[0] = redness * 40
+            scores[0] = (redness * 25) + (red_ratio * 35) + (red_std / 40 * 15)
+            if red_mean > 180 and red_ratio > 0.40:
+                scores[0] += 20  # Boost for high red values
             
             # Basal cell carcinoma (1)
-            scores[1] = (redness * 15) + ((red_mean + green_mean + blue_mean) / 450 * 30) + (red_std / 50 * 15)
-            
+            scores[1] = ((red_mean + green_mean + blue_mean) / 550 * 40)  # Light pink-ish appearance
+            if color_variation < 30:  # Uniformity is key for BCC
+                scores[1] += 20
+            if 1.05 < redness < 1.2:  # Moderate redness
+                scores[1] += 15
+                
             # Benign keratosis-like lesions (2)
-            scores[2] = brownness * 50 + (1 - (color_variation / 100)) * 20
+            scores[2] = (brownness * 40) + ((1 - (color_variation / 100)) * 20)
+            if red_mean > 150 and green_mean > 100 and blue_mean < 120 and red_ratio > 0.40:
+                scores[2] += 25  # Boost for specific light brown color
             
             # Dermatofibroma (3)
-            scores[3] = brownness * 25 + redness * 15 + (brightness / 150) * 20
+            scores[3] = (brownness * 20) + (redness * 10) + ((brightness / 150) * 10)
+            if 80 < brightness < 150 and red_mean > 140 and green_mean > 100:
+                scores[3] += 10  # Medium brightness with some red
             
             # Melanoma (4)
-            scores[4] = (color_variation / 70) * 30 + (darkness / 150) * 40
+            scores[4] = ((color_variation / 70) * 35) + ((darkness / 180) * 40)
+            if max(red_std, green_std, blue_std) > 50:
+                scores[4] += 15  # High color variability
             
             # Melanocytic nevi (5) - default to this most common condition
-            scores[5] = brownness * 40 + (1 - (color_variation / 100)) * 30 + 10  # bonus for most common
+            scores[5] = (brownness * 35) + ((1 - (color_variation / 100)) * 20)
+            if red_mean > green_mean > blue_mean and blue_ratio < 0.30:
+                scores[5] += 20  # Classic brown pattern
             
             # Vascular lesions (6)
-            scores[6] = redness * 30 + (blue_ratio * 30)
+            scores[6] = (redness * 20) + (blue_ratio * 40)
+            if blue_mean > 110 and green_mean < blue_mean and red_mean > 130:
+                scores[6] += 20  # Purple-ish tint
             
             # Get best match
             best_index = np.argmax(scores)
