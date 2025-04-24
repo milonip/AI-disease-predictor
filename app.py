@@ -10,7 +10,7 @@ from assets.symptoms_list import symptoms_list
 
 try:
     from utils.symptom_predictor import get_symptom_prediction
-    from utils.image_predictor import get_image_prediction
+    from utils.image_predictor_tf import get_image_prediction
 except ImportError as e:
     st.error(f"Import error: {e}")
 
