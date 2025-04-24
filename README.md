@@ -106,3 +106,8 @@ This application is for educational purposes only and should not be used for sel
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Author
+
+Miloni Patel 
+@milonip
