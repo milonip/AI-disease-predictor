@@ -103,9 +103,6 @@ This application is for educational purposes only and should not be used for sel
 - Kaggle disease prediction dataset for symptom-based model training
 - Streamlit for the web application framework
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Author
 
