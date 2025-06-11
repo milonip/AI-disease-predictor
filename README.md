@@ -17,6 +17,13 @@ This application provides two methods for disease prediction:
 - **High Accuracy**: Optimized algorithms for accurate disease prediction
 - **Responsive Design**: Works well on various devices and screen sizes
 
+## Visuals
+
+<img width="1470" alt="Screenshot 2025-05-08 at 9 45 51 PM" src="https://github.com/user-attachments/assets/77468b5a-d918-46d0-be9f-9eb26e7b16eb" />
+<img width="1470" alt="Screenshot 2025-05-08 at 9 46 04 PM" src="https://github.com/user-attachments/assets/95ae54cc-5691-4d2a-a2db-a269baa63dc5" />
+<img width="1470" alt="Screenshot 2025-05-08 at 9 46 43 PM" src="https://github.com/user-attachments/assets/1fb9557a-84fb-42c7-836b-087aff27f486" />
+<img width="1470" alt="Screenshot 2025-05-08 at 9 47 02 PM" src="https://github.com/user-attachments/assets/93c4f828-8c04-49ae-8f6f-117836ed01d8" />
+
 ## Technical Details
 
 ### Technologies Used
